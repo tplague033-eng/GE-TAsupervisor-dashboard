@@ -8,8 +8,45 @@ import {
   Users,
   Settings,
   RotateCcw,
+  Calendar,
+  FileText,
+  Printer,
+  TrendingUp,
 } from "lucide-react";
+import { initializeApp } from "firebase/app";
+import {
+  getDatabase,
+  ref,
+  set,
+  get,
+  query,
+  orderByKey,
+  startAt,
+  endAt,
+} from "firebase/database";
 
+// ========================================
+// FIREBASE CONFIG - SUDAH DIPERBAIKI
+// ========================================
+const firebaseConfig = {
+  apiKey: "AIzaSyDA5Kim8dZfsuVLIV1lRZCyfnW6YA9DGVQ",
+  authDomain: "ge-tos-dashboard.firebaseapp.com",
+  databaseURL:
+    "https://ge-tos-dashboard-default-rtdb.asia-southeast1.firebasedatabase.app",
+  projectId: "ge-tos-dashboard",
+  storageBucket: "ge-tos-dashboard.firebasestorage.app",
+  messagingSenderId: "342247541094",
+  appId: "1:342247541094:web:1fcd26d9c7a4fd5096e0a7",
+  measurementId: "G-RHDME53NKM",
+};
+
+// Initialize Firebase
+const app = initializeApp(firebaseConfig);
+const database = getDatabase(app);
+
+// ========================================
+// TYPES
+// ========================================
 interface Task {
   id: number;
   text: string;
@@ -25,7 +62,37 @@ interface Category {
   tasks: Task[];
 }
 
-export default function SupervisorDailyTracker(): JSX.Element {
+interface DailyLog {
+  tasks: Category[];
+  notes: string;
+  timestamp: number;
+  progress: number;
+}
+
+interface WeeklyData {
+  date: string;
+  progress: number;
+  notes: string;
+}
+
+// ========================================
+// MAIN COMPONENT
+// ========================================
+export default function SupervisorDashboard(): JSX.Element {
+  const [activeTab, setActiveTab] = useState<"daily" | "weekly">("daily");
+  const [currentDate, setCurrentDate] = useState<string>(
+    new Date().toISOString().split("T")[0]
+  );
+  const [dailyNotes, setDailyNotes] = useState<string>("");
+  const [isSaving, setIsSaving] = useState<boolean>(false);
+  const [lastSaved, setLastSaved] = useState<string>("");
+
+  // Weekly Report States
+  const [startDate, setStartDate] = useState<string>("");
+  const [endDate, setEndDate] = useState<string>("");
+  const [weeklyData, setWeeklyData] = useState<WeeklyData[]>([]);
+  const [weeklyAverage, setWeeklyAverage] = useState<number>(0);
+
   const initialCategories: Category[] = [
     {
       id: 1,
@@ -115,45 +182,15 @@ export default function SupervisorDailyTracker(): JSX.Element {
     },
   ];
 
-  // Load data from localStorage on mount
-  const [categories, setCategories] = useState<Category[]>(() => {
-    const savedData = localStorage.getItem("supervisorDailyTracker");
-    if (savedData) {
-      try {
-        const parsed = JSON.parse(savedData);
-        // Re-add icons since they can't be serialized
-        return parsed.map((cat: any, index: number) => ({
-          ...cat,
-          icon: initialCategories[index].icon,
-        }));
-      } catch (error) {
-        console.error("Error loading data from localStorage:", error);
-        return initialCategories;
-      }
-    }
-    return initialCategories;
-  });
-
+  const [categories, setCategories] = useState<Category[]>(initialCategories);
   const [progress, setProgress] = useState<number>(0);
   const [totalTasks, setTotalTasks] = useState<number>(0);
   const [completedTasks, setCompletedTasks] = useState<number>(0);
 
-  // Save to localStorage whenever categories change
+  // Load data from Firebase on mount
   useEffect(() => {
-    try {
-      // Remove icons before saving (they can't be serialized)
-      const dataToSave = categories.map((cat) => ({
-        ...cat,
-        icon: null,
-      }));
-      localStorage.setItem(
-        "supervisorDailyTracker",
-        JSON.stringify(dataToSave)
-      );
-    } catch (error) {
-      console.error("Error saving data to localStorage:", error);
-    }
-  }, [categories]);
+    loadDailyData(currentDate);
+  }, [currentDate]);
 
   // Calculate progress
   useEffect(() => {
@@ -168,6 +205,110 @@ export default function SupervisorDailyTracker(): JSX.Element {
     setProgress(total > 0 ? Math.round((completed / total) * 100) : 0);
   }, [categories]);
 
+  // Auto-save to Firebase
+  useEffect(() => {
+    const saveTimer = setTimeout(() => {
+      saveDailyData();
+    }, 2000);
+
+    return () => clearTimeout(saveTimer);
+  }, [categories, dailyNotes, progress]);
+
+  // ========================================
+  // FIREBASE FUNCTIONS
+  // ========================================
+  const loadDailyData = async (date: string) => {
+    try {
+      const logRef = ref(database, `logs/${date}`);
+      const snapshot = await get(logRef);
+
+      if (snapshot.exists()) {
+        const data: DailyLog = snapshot.val();
+        // Restore icons (because Firebase doesn't store React components)
+        const restoredCategories = data.tasks.map((cat, index) => ({
+          ...cat,
+          icon: initialCategories[index].icon,
+        }));
+        setCategories(restoredCategories);
+        setDailyNotes(data.notes || "");
+      } else {
+        setCategories(initialCategories);
+        setDailyNotes("");
+      }
+    } catch (error) {
+      console.error("Error loading data:", error);
+    }
+  };
+
+  const saveDailyData = async () => {
+    try {
+      setIsSaving(true);
+      const logRef = ref(database, `logs/${currentDate}`);
+
+      // Remove icon property before saving to avoid circular structure error
+      const dataToSave = {
+        tasks: categories.map((cat) => {
+          const { icon, ...rest } = cat;
+          return rest;
+        }),
+        notes: dailyNotes,
+        timestamp: Date.now(),
+        progress: progress,
+      };
+
+      await set(logRef, dataToSave);
+      setLastSaved(
+        new Date().toLocaleTimeString("id-ID", {
+          hour: "2-digit",
+          minute: "2-digit",
+        })
+      );
+      setIsSaving(false);
+    } catch (error) {
+      console.error("Error saving data:", error);
+      setIsSaving(false);
+    }
+  };
+
+  const loadWeeklyReport = async () => {
+    if (!startDate || !endDate) return;
+
+    try {
+      const logsRef = ref(database, "logs");
+      const weekQuery = query(
+        logsRef,
+        orderByKey(),
+        startAt(startDate),
+        endAt(endDate)
+      );
+      const snapshot = await get(weekQuery);
+
+      if (snapshot.exists()) {
+        const data = snapshot.val();
+        const weeklyArray: WeeklyData[] = Object.keys(data).map((date) => ({
+          date,
+          progress: data[date].progress || 0,
+          notes: data[date].notes || "Tidak ada catatan",
+        }));
+
+        setWeeklyData(weeklyArray);
+
+        const avgProgress =
+          weeklyArray.reduce((sum, day) => sum + day.progress, 0) /
+          weeklyArray.length;
+        setWeeklyAverage(Math.round(avgProgress));
+      } else {
+        setWeeklyData([]);
+        setWeeklyAverage(0);
+      }
+    } catch (error) {
+      console.error("Error loading weekly report:", error);
+    }
+  };
+
+  // ========================================
+  // UI HANDLERS
+  // ========================================
   const toggleCategory = (categoryId: number): void => {
     setCategories(
       categories.map((cat) =>
@@ -201,20 +342,27 @@ export default function SupervisorDailyTracker(): JSX.Element {
       tasks: cat.tasks.map((task) => ({ ...task, completed: false })),
     }));
     setCategories(resetCategories);
-    localStorage.removeItem("supervisorDailyTracker");
+    setDailyNotes("");
   };
 
+  const handlePrint = (): void => {
+    window.print();
+  };
+
+  // ========================================
+  // RENDER
+  // ========================================
   return (
     <div className="min-h-screen bg-gradient-to-br from-fuchsia-600 via-purple-600 to-orange-400 p-4 pb-8">
       {/* Header */}
-      <div className="max-w-2xl mx-auto pt-6 pb-4">
-        <div className="flex justify-between items-start mb-4">
+      <div className="max-w-4xl mx-auto pt-6 pb-4">
+        <div className="flex justify-between items-start mb-6">
           <div>
             <h1 className="text-3xl font-bold text-white mb-1">
-              Supervisor Daily Tracker
+              Supervisor Dashboard Pro
             </h1>
             <p className="text-white/80 text-sm">
-              Track your daily responsibilities
+              Complete Task & Report Management System
             </p>
           </div>
           <button
@@ -226,146 +374,319 @@ export default function SupervisorDailyTracker(): JSX.Element {
           </button>
         </div>
 
-        {/* Status Card */}
-        <div className="bg-white/10 backdrop-blur-md rounded-2xl p-5 shadow-xl border border-white/20 mb-6">
-          <div className="flex items-center justify-between mb-3">
-            <div>
-              <p className="text-white/80 text-sm mb-1">Daily Status</p>
-              <h2 className="text-2xl font-bold text-white">
-                {progress === 100
-                  ? "Excellent! All Tasks Done 🎉"
-                  : "In Progress"}
-              </h2>
-            </div>
-            <div
-              className={`${
-                progress === 100 ? "bg-green-400/30" : "bg-blue-400/30"
-              } p-3 rounded-full`}
-            >
-              <CheckCircle className="w-8 h-8 text-white" />
-            </div>
-          </div>
-
-          {/* Progress Bar */}
-          <div className="mt-4">
-            <div className="flex justify-between text-white/90 text-sm mb-2">
-              <span>Progress</span>
-              <span className="font-bold">
-                {completedTasks}/{totalTasks} Tasks ({progress}%)
-              </span>
-            </div>
-            <div className="w-full bg-white/20 rounded-full h-3 overflow-hidden">
-              <div
-                className="bg-gradient-to-r from-green-400 to-teal-400 h-full rounded-full transition-all duration-500 ease-out"
-                style={{ width: `${progress}%` }}
-              />
-            </div>
-          </div>
-        </div>
-
-        {/* Storage Status Indicator */}
-        <div className="bg-white/5 backdrop-blur-sm rounded-lg p-3 mb-4 border border-white/10">
-          <p className="text-white/70 text-xs text-center flex items-center justify-center gap-2">
-            <span className="w-2 h-2 bg-green-400 rounded-full animate-pulse"></span>
-            Data tersimpan otomatis di browser Anda
-          </p>
-        </div>
-      </div>
-
-      {/* Category Cards */}
-      <div className="max-w-2xl mx-auto space-y-4">
-        {categories.map((category) => (
-          <div
-            key={category.id}
-            className="bg-white/10 backdrop-blur-md rounded-2xl shadow-lg border border-white/20 overflow-hidden"
+        {/* Tabs Navigation */}
+        <div className="flex gap-2 mb-6">
+          <button
+            onClick={() => setActiveTab("daily")}
+            className={`flex-1 py-3 px-6 rounded-xl font-semibold transition-all duration-300 flex items-center justify-center gap-2 ${
+              activeTab === "daily"
+                ? "bg-white text-purple-600 shadow-lg"
+                : "bg-white/20 text-white hover:bg-white/30"
+            }`}
           >
-            {/* Category Header */}
-            <div
-              onClick={() => toggleCategory(category.id)}
-              className="p-5 cursor-pointer hover:bg-white/5 transition-all duration-300"
-            >
-              <div className="flex items-center justify-between">
-                <div className="flex items-center gap-4">
+            <CheckCircle className="w-5 h-5" />
+            Daily Tracker
+          </button>
+          <button
+            onClick={() => setActiveTab("weekly")}
+            className={`flex-1 py-3 px-6 rounded-xl font-semibold transition-all duration-300 flex items-center justify-center gap-2 ${
+              activeTab === "weekly"
+                ? "bg-white text-purple-600 shadow-lg"
+                : "bg-white/20 text-white hover:bg-white/30"
+            }`}
+          >
+            <TrendingUp className="w-5 h-5" />
+            Weekly Report
+          </button>
+        </div>
+
+        {/* DAILY TRACKER TAB */}
+        {activeTab === "daily" && (
+          <>
+            {/* Status Card */}
+            <div className="bg-white/10 backdrop-blur-md rounded-2xl p-5 shadow-xl border border-white/20 mb-6">
+              <div className="flex items-center justify-between mb-3">
+                <div>
+                  <p className="text-white/80 text-sm mb-1">
+                    {new Date(currentDate).toLocaleDateString("id-ID", {
+                      weekday: "long",
+                      year: "numeric",
+                      month: "long",
+                      day: "numeric",
+                    })}
+                  </p>
+                  <h2 className="text-2xl font-bold text-white">
+                    {progress === 100
+                      ? "Excellent! All Tasks Done 🎉"
+                      : "In Progress"}
+                  </h2>
+                </div>
+                <div
+                  className={`${
+                    progress === 100 ? "bg-green-400/30" : "bg-blue-400/30"
+                  } p-3 rounded-full`}
+                >
+                  <CheckCircle className="w-8 h-8 text-white" />
+                </div>
+              </div>
+
+              <div className="mt-4">
+                <div className="flex justify-between text-white/90 text-sm mb-2">
+                  <span>Progress</span>
+                  <span className="font-bold">
+                    {completedTasks}/{totalTasks} Tasks ({progress}%)
+                  </span>
+                </div>
+                <div className="w-full bg-white/20 rounded-full h-3 overflow-hidden">
                   <div
-                    className={`bg-gradient-to-br ${category.color} p-3 rounded-xl`}
+                    className="bg-gradient-to-r from-green-400 to-teal-400 h-full rounded-full transition-all duration-500 ease-out"
+                    style={{ width: `${progress}%` }}
+                  />
+                </div>
+              </div>
+            </div>
+
+            {/* Save Status */}
+            <div className="bg-white/5 backdrop-blur-sm rounded-lg p-3 mb-4 border border-white/10">
+              <p className="text-white/70 text-xs text-center flex items-center justify-center gap-2">
+                {isSaving ? (
+                  <>
+                    <span className="w-2 h-2 bg-yellow-400 rounded-full animate-pulse"></span>
+                    Menyimpan ke Firebase...
+                  </>
+                ) : (
+                  <>
+                    <span className="w-2 h-2 bg-green-400 rounded-full"></span>
+                    Tersimpan otomatis {lastSaved && `- ${lastSaved}`}
+                  </>
+                )}
+              </p>
+            </div>
+
+            {/* Category Cards */}
+            <div className="space-y-4 mb-6">
+              {categories.map((category) => (
+                <div
+                  key={category.id}
+                  className="bg-white/10 backdrop-blur-md rounded-2xl shadow-lg border border-white/20 overflow-hidden"
+                >
+                  <div
+                    onClick={() => toggleCategory(category.id)}
+                    className="p-5 cursor-pointer hover:bg-white/5 transition-all duration-300"
                   >
-                    {category.icon}
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-4">
+                        <div
+                          className={`bg-gradient-to-br ${category.color} p-3 rounded-xl`}
+                        >
+                          {category.icon}
+                        </div>
+                        <div>
+                          <h3 className="text-white font-semibold text-lg">
+                            {category.title}
+                          </h3>
+                          <p className="text-white/70 text-sm">
+                            {category.tasks.filter((t) => t.completed).length}/
+                            {category.tasks.length} completed
+                          </p>
+                        </div>
+                      </div>
+                      {category.isOpen ? (
+                        <ChevronDown className="w-6 h-6 text-white/70" />
+                      ) : (
+                        <ChevronRight className="w-6 h-6 text-white/70" />
+                      )}
+                    </div>
                   </div>
-                  <div>
-                    <h3 className="text-white font-semibold text-lg">
-                      {category.title}
-                    </h3>
-                    <p className="text-white/70 text-sm">
-                      {category.tasks.filter((t) => t.completed).length}/
-                      {category.tasks.length} completed
-                    </p>
+
+                  {category.isOpen && (
+                    <div className="px-5 pb-5 space-y-3">
+                      {category.tasks.map((task) => (
+                        <div
+                          key={task.id}
+                          className="bg-white/5 backdrop-blur-sm rounded-xl p-4 border border-white/10 hover:bg-white/10 transition-all duration-300"
+                        >
+                          <label className="flex items-start gap-3 cursor-pointer">
+                            <input
+                              type="checkbox"
+                              checked={task.completed}
+                              onChange={() => toggleTask(category.id, task.id)}
+                              className="mt-1 w-5 h-5 rounded border-2 border-white/30 bg-white/10 checked:bg-teal-500 checked:border-teal-500 cursor-pointer transition-all duration-300"
+                            />
+                            <span
+                              className={`text-white leading-relaxed flex-1 transition-all duration-300 ${
+                                task.completed
+                                  ? "line-through opacity-50"
+                                  : "opacity-100"
+                              }`}
+                            >
+                              {task.text}
+                            </span>
+                          </label>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              ))}
+            </div>
+
+            {/* Daily Notes Section */}
+            <div className="bg-white/10 backdrop-blur-md rounded-2xl p-6 shadow-xl border border-white/20 mb-6">
+              <div className="flex items-center gap-3 mb-4">
+                <FileText className="w-6 h-6 text-white" />
+                <h3 className="text-xl font-bold text-white">
+                  Catatan Supervisi / Temuan Hari Ini
+                </h3>
+              </div>
+              <textarea
+                value={dailyNotes}
+                onChange={(e) => setDailyNotes(e.target.value)}
+                placeholder="Tulis catatan kendala, temuan penting, atau laporan manual di sini..."
+                className="w-full h-40 bg-white/10 border border-white/20 rounded-xl p-4 text-white placeholder-white/50 focus:outline-none focus:ring-2 focus:ring-white/30 resize-none"
+              />
+              <p className="text-white/60 text-xs mt-2">
+                Catatan otomatis tersimpan ke Firebase
+              </p>
+            </div>
+          </>
+        )}
+
+        {/* WEEKLY REPORT TAB */}
+        {activeTab === "weekly" && (
+          <div className="space-y-6">
+            {/* Date Range Selector */}
+            <div className="bg-white/10 backdrop-blur-md rounded-2xl p-6 shadow-xl border border-white/20">
+              <h3 className="text-xl font-bold text-white mb-4 flex items-center gap-2">
+                <Calendar className="w-6 h-6" />
+                Pilih Rentang Tanggal
+              </h3>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
+                <div>
+                  <label className="text-white/80 text-sm mb-2 block">
+                    Tanggal Mulai
+                  </label>
+                  <input
+                    type="date"
+                    value={startDate}
+                    onChange={(e) => setStartDate(e.target.value)}
+                    className="w-full bg-white/10 border border-white/20 rounded-xl p-3 text-white focus:outline-none focus:ring-2 focus:ring-white/30"
+                  />
+                </div>
+                <div>
+                  <label className="text-white/80 text-sm mb-2 block">
+                    Tanggal Akhir
+                  </label>
+                  <input
+                    type="date"
+                    value={endDate}
+                    onChange={(e) => setEndDate(e.target.value)}
+                    className="w-full bg-white/10 border border-white/20 rounded-xl p-3 text-white focus:outline-none focus:ring-2 focus:ring-white/30"
+                  />
+                </div>
+              </div>
+              <button
+                onClick={loadWeeklyReport}
+                className="w-full bg-teal-500 hover:bg-teal-600 text-white font-semibold py-3 rounded-xl transition-all duration-300 flex items-center justify-center gap-2"
+              >
+                <TrendingUp className="w-5 h-5" />
+                Generate Laporan
+              </button>
+            </div>
+
+            {/* Weekly Summary */}
+            {weeklyData.length > 0 && (
+              <>
+                <div className="bg-white/10 backdrop-blur-md rounded-2xl p-6 shadow-xl border border-white/20">
+                  <h3 className="text-xl font-bold text-white mb-4">
+                    Ringkasan Kinerja Mingguan
+                  </h3>
+                  <div className="grid grid-cols-2 gap-4">
+                    <div className="bg-white/5 rounded-xl p-4 border border-white/10">
+                      <p className="text-white/70 text-sm mb-1">Total Hari</p>
+                      <p className="text-3xl font-bold text-white">
+                        {weeklyData.length}
+                      </p>
+                    </div>
+                    <div className="bg-white/5 rounded-xl p-4 border border-white/10">
+                      <p className="text-white/70 text-sm mb-1">
+                        Rata-rata Progress
+                      </p>
+                      <p className="text-3xl font-bold text-white">
+                        {weeklyAverage}%
+                      </p>
+                    </div>
                   </div>
                 </div>
-                {category.isOpen ? (
-                  <ChevronDown className="w-6 h-6 text-white/70" />
-                ) : (
-                  <ChevronRight className="w-6 h-6 text-white/70" />
-                )}
-              </div>
-            </div>
 
-            {/* Tasks List */}
-            {category.isOpen && (
-              <div className="px-5 pb-5 space-y-3">
-                {category.tasks.map((task) => (
-                  <div
-                    key={task.id}
-                    className="bg-white/5 backdrop-blur-sm rounded-xl p-4 border border-white/10 hover:bg-white/10 transition-all duration-300"
-                  >
-                    <label className="flex items-start gap-3 cursor-pointer">
-                      <input
-                        type="checkbox"
-                        checked={task.completed}
-                        onChange={() => toggleTask(category.id, task.id)}
-                        className="mt-1 w-5 h-5 rounded border-2 border-white/30 bg-white/10 checked:bg-teal-500 checked:border-teal-500 cursor-pointer transition-all duration-300"
-                      />
-                      <span
-                        className={`text-white leading-relaxed flex-1 transition-all duration-300 ${
-                          task.completed
-                            ? "line-through opacity-50"
-                            : "opacity-100"
-                        }`}
-                      >
-                        {task.text}
-                      </span>
-                    </label>
+                {/* Weekly Table */}
+                <div className="bg-white/10 backdrop-blur-md rounded-2xl p-6 shadow-xl border border-white/20">
+                  <div className="flex justify-between items-center mb-4">
+                    <h3 className="text-xl font-bold text-white">
+                      Rincian Harian
+                    </h3>
+                    <button
+                      onClick={handlePrint}
+                      className="bg-white/20 hover:bg-white/30 text-white px-4 py-2 rounded-xl flex items-center gap-2 transition-all duration-300"
+                    >
+                      <Printer className="w-4 h-4" />
+                      Print Report
+                    </button>
                   </div>
-                ))}
-              </div>
+                  <div className="overflow-x-auto">
+                    <table className="w-full">
+                      <thead>
+                        <tr className="border-b border-white/20">
+                          <th className="text-left text-white/80 py-3 px-4">
+                            Tanggal
+                          </th>
+                          <th className="text-left text-white/80 py-3 px-4">
+                            Progress
+                          </th>
+                          <th className="text-left text-white/80 py-3 px-4">
+                            Catatan Supervisi
+                          </th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {weeklyData.map((day, index) => (
+                          <tr
+                            key={index}
+                            className="border-b border-white/10 hover:bg-white/5"
+                          >
+                            <td className="text-white py-3 px-4">
+                              {new Date(day.date).toLocaleDateString("id-ID", {
+                                weekday: "short",
+                                day: "numeric",
+                                month: "short",
+                              })}
+                            </td>
+                            <td className="text-white py-3 px-4">
+                              <div className="flex items-center gap-2">
+                                <div className="w-20 bg-white/20 rounded-full h-2">
+                                  <div
+                                    className="bg-gradient-to-r from-green-400 to-teal-400 h-full rounded-full"
+                                    style={{ width: `${day.progress}%` }}
+                                  />
+                                </div>
+                                <span className="font-semibold">
+                                  {day.progress}%
+                                </span>
+                              </div>
+                            </td>
+                            <td className="text-white/80 py-3 px-4 text-sm max-w-md truncate">
+                              {day.notes}
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              </>
             )}
           </div>
-        ))}
-      </div>
-
-      {/* Summary Footer */}
-      <div className="max-w-2xl mx-auto mt-6">
-        <div className="bg-white/10 backdrop-blur-md rounded-2xl p-5 shadow-xl border border-white/20 text-center">
-          <p className="text-white/80 text-sm mb-2">
-            {progress === 100
-              ? "🎯 Semua tugas hari ini telah selesai! Kerja bagus!"
-              : `💪 Tetap semangat! ${
-                  totalTasks - completedTasks
-                } tugas tersisa`}
-          </p>
-          <div className="flex justify-center gap-6 mt-3">
-            <div className="text-center">
-              <p className="text-2xl font-bold text-white">{completedTasks}</p>
-              <p className="text-white/70 text-xs">Completed</p>
-            </div>
-            <div className="border-l border-white/30"></div>
-            <div className="text-center">
-              <p className="text-2xl font-bold text-white">
-                {totalTasks - completedTasks}
-              </p>
-              <p className="text-white/70 text-xs">Remaining</p>
-            </div>
-          </div>
-        </div>
+        )}
       </div>
     </div>
   );
