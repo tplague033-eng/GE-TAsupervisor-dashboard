@@ -12,6 +12,10 @@ import {
   FileText,
   Printer,
   TrendingUp,
+  ExternalLink,
+  FileSpreadsheet,
+  LayoutGrid,
+  Globe,
 } from "lucide-react";
 import { initializeApp } from "firebase/app";
 import {
@@ -26,7 +30,34 @@ import {
 } from "firebase/database";
 
 // ========================================
-// FIREBASE CONFIG - SUDAH DIPERBAIKI
+// 1. QUICK LINKS CONFIG - ISI LINK ANDA DI SINI
+// ========================================
+const QUICK_LINKS = [
+  {
+    id: 1,
+    title: "Progres keseluruhan-Kelas",
+    url: "https://docs.google.com/spreadsheets/d/1jfWYxDXpTpDKZlmpnrtSCjKAFO-NLFsKMh_5LuTfqxE/edit?usp=sharing",
+    icon: <FileSpreadsheet className="w-5 h-5" />,
+    color: "bg-green-500/20 text-green-100 border-green-500/30",
+  },
+  {
+    id: 2,
+    title: "Placement test-Teens",
+    url: "https://docs.google.com/spreadsheets/d/1_7dIb1X9NEnnHeiGNe-buthWJ16YPT1ZofMhNOszjaM/edit?usp=sharing",
+    icon: <FileSpreadsheet className="w-5 h-5" />,
+    color: "bg-blue-500/20 text-blue-100 border-blue-500/30",
+  },
+  {
+    id: 3,
+    title: "Placement test-Adults & SO",
+    url: "https://docs.google.com/spreadsheets/d/1-0KQjPY-wusZ99cpKT2LFbpjomCaM8-ZAmr6QCXxT9o/edit?usp=sharing",
+    icon: <FileSpreadsheet className="w-5 h-5" />,
+    color: "bg-indigo-500/20 text-indigo-100 border-indigo-500/30",
+  },
+];
+
+// ========================================
+// 2. FIREBASE CONFIG - PASTE CREDENTIALS ANDA DI SINI
 // ========================================
 const firebaseConfig = {
   apiKey: "AIzaSyDA5Kim8dZfsuVLIV1lRZCyfnW6YA9DGVQ",
@@ -224,7 +255,7 @@ export default function SupervisorDashboard(): JSX.Element {
 
       if (snapshot.exists()) {
         const data: DailyLog = snapshot.val();
-        // Restore icons (because Firebase doesn't store React components)
+        // Restore icons
         const restoredCategories = data.tasks.map((cat, index) => ({
           ...cat,
           icon: initialCategories[index].icon,
@@ -245,7 +276,7 @@ export default function SupervisorDashboard(): JSX.Element {
       setIsSaving(true);
       const logRef = ref(database, `logs/${currentDate}`);
 
-      // Remove icon property before saving to avoid circular structure error
+      // Remove icon property before saving
       const dataToSave = {
         tasks: categories.map((cat) => {
           const { icon, ...rest } = cat;
@@ -359,7 +390,7 @@ export default function SupervisorDashboard(): JSX.Element {
         <div className="flex justify-between items-start mb-6">
           <div>
             <h1 className="text-3xl font-bold text-white mb-1">
-              Supervisor Dashboard Pro
+              GE-TOS-Dashboard
             </h1>
             <p className="text-white/80 text-sm">
               Complete Task & Report Management System
@@ -372,6 +403,23 @@ export default function SupervisorDashboard(): JSX.Element {
             <RotateCcw className="w-4 h-4" />
             <span className="text-sm font-semibold">Reset</span>
           </button>
+        </div>
+
+        {/* Quick Access Links */}
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 mb-6">
+          {QUICK_LINKS.map((link) => (
+            <a
+              key={link.id}
+              href={link.url}
+              target="_blank"
+              rel="noopener noreferrer"
+              className={`flex items-center gap-3 p-3 rounded-xl backdrop-blur-sm border transition-all duration-300 hover:scale-105 hover:shadow-lg ${link.color}`}
+            >
+              {link.icon}
+              <span className="font-semibold text-sm flex-1">{link.title}</span>
+              <ExternalLink className="w-4 h-4 opacity-70" />
+            </a>
+          ))}
         </div>
 
         {/* Tabs Navigation */}
