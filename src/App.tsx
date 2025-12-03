@@ -16,6 +16,8 @@ import {
   FileSpreadsheet,
   LayoutGrid,
   Globe,
+  Eye,
+  X,
 } from "lucide-react";
 import { initializeApp } from "firebase/app";
 import {
@@ -60,6 +62,7 @@ const QUICK_LINKS = [
 // 2. FIREBASE CONFIG - PASTE CREDENTIALS ANDA DI SINI
 // ========================================
 const firebaseConfig = {
+  // --- TEMPEL KODE FIREBASE ASLI ANDA DI BAWAH INI ---
   apiKey: "AIzaSyDA5Kim8dZfsuVLIV1lRZCyfnW6YA9DGVQ",
   authDomain: "ge-tos-dashboard.firebaseapp.com",
   databaseURL:
@@ -123,6 +126,9 @@ export default function SupervisorDashboard(): JSX.Element {
   const [endDate, setEndDate] = useState<string>("");
   const [weeklyData, setWeeklyData] = useState<WeeklyData[]>([]);
   const [weeklyAverage, setWeeklyAverage] = useState<number>(0);
+
+  // Modal State for History Detail
+  const [selectedLog, setSelectedLog] = useState<WeeklyData | null>(null);
 
   const initialCategories: Category[] = [
     {
@@ -722,8 +728,20 @@ export default function SupervisorDashboard(): JSX.Element {
                                 </span>
                               </div>
                             </td>
-                            <td className="text-white/80 py-3 px-4 text-sm max-w-md truncate">
-                              {day.notes}
+                            {/* KOLOM CATATAN DENGAN TOMBOL VIEW */}
+                            <td className="text-white/80 py-3 px-4 text-sm max-w-xs">
+                              <div className="flex items-center justify-between gap-2">
+                                <span className="truncate flex-1">
+                                  {day.notes}
+                                </span>
+                                <button
+                                  onClick={() => setSelectedLog(day)}
+                                  className="p-2 bg-white/10 hover:bg-white/20 rounded-lg transition-colors"
+                                  title="Lihat Detail"
+                                >
+                                  <Eye className="w-4 h-4 text-white" />
+                                </button>
+                              </div>
                             </td>
                           </tr>
                         ))}
@@ -733,6 +751,72 @@ export default function SupervisorDashboard(): JSX.Element {
                 </div>
               </>
             )}
+          </div>
+        )}
+
+        {/* MODAL DETAIL POPUP */}
+        {selectedLog && (
+          <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+            <div className="bg-white rounded-2xl w-full max-w-lg shadow-2xl overflow-hidden animate-in fade-in zoom-in duration-200">
+              <div className="bg-purple-600 p-4 flex justify-between items-center">
+                <h3 className="text-white font-bold text-lg flex items-center gap-2">
+                  <Calendar className="w-5 h-5" />
+                  Detail Laporan
+                </h3>
+                <button
+                  onClick={() => setSelectedLog(null)}
+                  className="text-white/80 hover:text-white hover:bg-white/20 p-1 rounded-lg transition-all"
+                >
+                  <X className="w-6 h-6" />
+                </button>
+              </div>
+              <div className="p-6">
+                <div className="mb-4">
+                  <p className="text-gray-500 text-sm mb-1">Tanggal</p>
+                  <p className="text-gray-800 font-semibold text-lg">
+                    {new Date(selectedLog.date).toLocaleDateString("id-ID", {
+                      weekday: "long",
+                      day: "numeric",
+                      month: "long",
+                      year: "numeric",
+                    })}
+                  </p>
+                </div>
+
+                <div className="mb-4">
+                  <p className="text-gray-500 text-sm mb-1">Progress</p>
+                  <div className="flex items-center gap-2">
+                    <div className="w-full bg-gray-200 rounded-full h-3 max-w-[200px]">
+                      <div
+                        className="bg-purple-600 h-full rounded-full"
+                        style={{ width: `${selectedLog.progress}%` }}
+                      />
+                    </div>
+                    <span className="font-bold text-purple-600">
+                      {selectedLog.progress}%
+                    </span>
+                  </div>
+                </div>
+
+                <div className="bg-gray-50 rounded-xl p-4 border border-gray-100">
+                  <p className="text-gray-500 text-sm mb-2 flex items-center gap-2">
+                    <FileText className="w-4 h-4" />
+                    Catatan Supervisi Lengkap
+                  </p>
+                  <p className="text-gray-800 whitespace-pre-wrap leading-relaxed">
+                    {selectedLog.notes || "Tidak ada catatan."}
+                  </p>
+                </div>
+              </div>
+              <div className="bg-gray-50 p-4 flex justify-end">
+                <button
+                  onClick={() => setSelectedLog(null)}
+                  className="bg-gray-200 hover:bg-gray-300 text-gray-700 px-4 py-2 rounded-lg font-medium transition-colors"
+                >
+                  Tutup
+                </button>
+              </div>
+            </div>
           </div>
         )}
       </div>
